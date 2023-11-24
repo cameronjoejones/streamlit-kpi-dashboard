@@ -91,7 +91,7 @@ def app():
 
             if "messages" not in st.session_state.keys():  # Initialize the chat messages history
                 st.session_state.messages = [
-                    {"role": "assistant", "content": "Ask me a question about your inputted data!"}
+                    {"role": "assistant", "content": f"Ask me a question about{symbol}"}
                 ]
 
             if "chat_engine" not in st.session_state.keys():  # Initialize the chat engine
