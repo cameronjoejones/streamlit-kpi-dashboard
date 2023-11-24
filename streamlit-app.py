@@ -3,7 +3,13 @@ import requests
 import pandas as pd
 import plotly.graph_objs as go
 
+import openai
+from llama_index import VectorStoreIndex, ServiceContext, Document
+from llama_index.indices.struct_store import GPTPandasIndex
+from llama_index.llms import OpenAI
+
 API_KEY = st.secrets["api"]["iex_key"]
+openai.api_key = st.secrets["api"]['open_ai']
 API_BASE_URL = "https://cloud.iexapis.com/stable/"
 
 def get_stock_data(symbol, time_range="5y"):
@@ -23,7 +29,13 @@ def get_stock_data(symbol, time_range="5y"):
     stock_data.set_index("date", inplace=True)
     stock_data = stock_data[["open", "high", "low", "close", "volume"]]
     stock_data.columns = ["Open", "High", "Low", "Close", "Volume"]
-    return stock_data
+
+    service_context = ServiceContext.from_defaults(llm=OpenAI(
+    model="gpt-3.5-turbo", temperature=0.5, system_prompt="You are an expert on the Data Analysis and your job is to answer analytical questions. Assume that all questions are related to dataset provided. Keep your answers technical and based on facts – do not hallucinate features."))
+    # index = VectorStoreIndex.from_documents(documents, service_context=service_context)
+    index = GPTPandasIndex(df=stock_data, service_context=service_context)
+
+    return stock_data, index
 
 def calculate_price_difference(stock_data):
     latest_price = stock_data.iloc[-1]["Close"]
@@ -43,22 +55,12 @@ def app():
     symbol = st.sidebar.selectbox("Select a stock symbol:", popular_symbols, index=2)
  
     st.sidebar.info('Created by Cameron Jones, view the Source Code on [GitHub](https://github.com/cameronjoejones/streamlit-kpi-dashboard)')
-    st.sidebar.text("")
-    st.sidebar.markdown(
-    """
-    <a href="https://twitter.com/cameronjoejones" target="_blank" style="text-decoration: none;">
-        <div style="display: flex; align-items: center;">
-            <img src="https://abs.twimg.com/icons/apple-touch-icon-192x192.png" width="30" height="30">
-            <span style="font-size: 16px; margin-left: 5px;">Follow me on Twitter</span>
-        </div>
-    </a>
-    """, unsafe_allow_html=True
-    )
 
     st.header(f"Stock Data for {symbol}")
 
     if symbol:
-        stock_data = get_stock_data(symbol)
+        stock_data = get_stock_data(symbol)[0]
+        index = get_stock_data(symbol)[1]
 
         if stock_data is not None:
             price_difference, percentage_difference = calculate_price_difference(stock_data)
@@ -85,6 +87,34 @@ def app():
             st.dataframe(stock_data.tail())
 
             st.download_button("Download Stock Data Overview", stock_data.to_csv(index=True), file_name=f"{symbol}_stock_data.csv", mime="text/csv")
+
+
+            if "messages" not in st.session_state.keys():  # Initialize the chat messages history
+                st.session_state.messages = [
+                    {"role": "assistant", "content": "Ask me a question about your inputted data!"}
+                ]
+
+            if "chat_engine" not in st.session_state.keys():  # Initialize the chat engine
+                st.session_state.chat_engine = index.as_chat_engine(
+                    chat_mode="condense_question", verbose=True)
+
+            # Prompt for user input and save to chat history
+            if prompt := st.chat_input("Your question"):
+                st.session_state.messages.append({"role": "user", "content": prompt})
+
+            for message in st.session_state.messages:  # Display the prior chat messages
+                with st.chat_message(message["role"]):
+                    st.write(message["content"])
+
+            # If last message is not from assistant, generate a new response
+            if st.session_state.messages[-1]["role"] != "assistant":
+                with st.chat_message("assistant"):
+                    with st.spinner("Thinking..."):
+                        response = st.session_state.chat_engine.chat(prompt)
+                        st.write(response.response)
+                        message = {"role": "assistant", "content": response.response}
+                        # Add response to message history
+                        st.session_state.messages.append(message)
 
 
 if __name__ == "__main__":
